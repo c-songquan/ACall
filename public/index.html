@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>ACall</title>
+</head>
+<body>
+  <h2>正在通话...</h2>
+  <script>
+    const ws = new WebSocket(location.origin.replace(/^http/, "ws"));
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+    });
+
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+    });
+
+    pc.ontrack = event => {
+      const audio = document.createElement("audio");
+      audio.srcObject = event.streams[0];
+      audio.autoplay = true;
+      document.body.appendChild(audio);
+    };
+
+    pc.onicecandidate = event => {
+      if (event.candidate) {
+        ws.send(JSON.stringify({ candidate: event.candidate }));
+      }
+    };
+
+    ws.onmessage = async (msg) => {
+      const data = JSON.parse(msg.data);
+      if (data.offer) {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        ws.send(JSON.stringify({ answer }));
+      } else if (data.answer) {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+      } else if (data.candidate) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (err) {
+          console.error("ICE candidate error", err);
+        }
+      }
+    };
+
+    async function startCall() {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      ws.send(JSON.stringify({ offer }));
+    }
+
+    startCall();
+  </script>
+</body>
+</html>
