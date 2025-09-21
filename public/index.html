@@ -1,111 +1,107 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>ACall</title>
-  <style>
-    body { font-family: Arial; padding: 20px; background: #f9f9f9; }
-    #login { margin-bottom: 20px; }
-    #users { margin: 10px 0; padding: 0; list-style: none; }
-    #users li { padding: 4px 8px; background: #eee; margin: 2px 0; border-radius: 4px; }
-    #volumeBar { width: 200px; height: 20px; background: #ddd; margin-top: 10px; border-radius: 4px; }
-    #volumeFill { height: 100%; width: 0; background: green; border-radius: 4px; }
-    button { margin: 5px; padding: 6px 12px; cursor: pointer; }
-  </style>
 </head>
 <body>
-  <div id="login">
-    <input id="username" placeholder="输入用户名">
-    <button onclick="login()">进入</button>
+  <h1>ACall</h1>
+  <input id="username" placeholder="Enter name"/>
+  <button id="joinBtn">Join</button>
+  <button id="toggleMic" disabled>Mute Mic</button>
+  <div>
+    <label>Volume: <input type="range" id="volume" min="0" max="2" step="0.1" value="1"/></label>
   </div>
+  <h3>Online Users</h3>
+  <ul id="userList"></ul>
+  <audio id="remoteAudio" autoplay></audio>
 
-  <div id="main" style="display:none;">
-    <h3>在线用户:</h3>
-    <ul id="users"></ul>
-
-    <button id="micBtn" onclick="toggleMic()">关闭麦克风</button>
-    <div id="volumeBar"><div id="volumeFill"></div></div>
-  </div>
-
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
-    let socket;
-    let localStream;
-    let micOn = true;
-    let username = "";
+    const ws = new WebSocket(`wss://${location.host}`);
+    let pc, localStream;
+    const remoteAudio = document.getElementById('remoteAudio');
+    const volumeControl = document.getElementById('volume');
+    const toggleMicBtn = document.getElementById('toggleMic');
+    const userList = document.getElementById('userList');
+    const usernameInput = document.getElementById('username');
+    const joinBtn = document.getElementById('joinBtn');
+    let micEnabled = true;
 
-    // 自动连接 + 重连
-    function connectSocket() {
-      socket = io({
-        reconnection: true,
-        reconnectionAttempts: Infinity,
-        reconnectionDelay: 2000
-      });
+    let username = '';
 
-      socket.on("connect", () => {
-        console.log("✅ 已连接");
-        if (username) socket.emit("login", username);
-      });
+    joinBtn.onclick = async () => {
+      username = usernameInput.value.trim();
+      if (!username) return alert("Enter name");
+      ws.send(JSON.stringify({ type: 'join', username }));
+      joinBtn.disabled = true;
+      usernameInput.disabled = true;
+      toggleMicBtn.disabled = false;
 
-      socket.on("disconnect", () => {
-        console.log("❌ 断开，等待重连...");
-      });
-
-      socket.on("userlist", (list) => {
-        const ul = document.getElementById("users");
-        ul.innerHTML = "";
-        list.forEach(u => {
-          const li = document.createElement("li");
-          li.innerText = u;
-          ul.appendChild(li);
-        });
-      });
-    }
-
-    function login() {
-      username = document.getElementById("username").value.trim();
-      if (!username) {
-        alert("请输入用户名");
-        return;
-      }
-      socket.emit("login", username);
-      document.getElementById("login").style.display = "none";
-      document.getElementById("main").style.display = "block";
-      startAudio();
-    }
-
-    async function startAudio() {
       localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioContext = new AudioContext();
-      const source = audioContext.createMediaStreamSource(localStream);
-      const analyser = audioContext.createAnalyser();
-      source.connect(analyser);
-      const data = new Uint8Array(analyser.frequencyBinCount);
+    };
 
-      function draw() {
-        analyser.getByteFrequencyData(data);
-        let volume = data.reduce((a,b)=>a+b) / data.length;
-        document.getElementById("volumeFill").style.width = Math.min(volume,200) + "px";
-        requestAnimationFrame(draw);
+    toggleMicBtn.onclick = () => {
+      micEnabled = !micEnabled;
+      localStream.getTracks().forEach(track => track.enabled = micEnabled);
+      toggleMicBtn.textContent = micEnabled ? "Mute Mic" : "Unmute Mic";
+    };
+
+    volumeControl.oninput = () => {
+      remoteAudio.volume = volumeControl.value;
+    };
+
+    ws.onmessage = async (event) => {
+      const msg = JSON.parse(event.data);
+
+      if (msg.type === 'users') {
+        userList.innerHTML = '';
+        msg.users.forEach(u => {
+          if (u === username) return;
+          const li = document.createElement('li');
+          li.textContent = u;
+          li.onclick = () => startCall(u);
+          userList.appendChild(li);
+        });
       }
-      draw();
+
+      if (msg.type === 'offer') {
+        await createPeer();
+        await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        ws.send(JSON.stringify({ type: 'answer', answer, target: msg.from }));
+      }
+
+      if (msg.type === 'answer') {
+        await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
+      }
+
+      if (msg.type === 'candidate') {
+        await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+      }
+    };
+
+    async function createPeer() {
+      pc = new RTCPeerConnection();
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          ws.send(JSON.stringify({ type: 'candidate', candidate: e.candidate, target: pc.targetUser }));
+        }
+      };
+      pc.ontrack = (e) => {
+        remoteAudio.srcObject = e.streams[0];
+      };
     }
 
-    function toggleMic() {
-      if (localStream) {
-        localStream.getTracks().forEach(track => track.enabled = !track.enabled);
-        micOn = !micOn;
-        document.getElementById("micBtn").innerText = micOn ? "关闭麦克风" : "打开麦克风";
-      }
+    async function startCall(targetUser) {
+      await createPeer();
+      pc.targetUser = targetUser;
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      ws.send(JSON.stringify({ type: 'offer', offer, target: targetUser }));
     }
-
-    // 防止 Render 休眠：定时 ping
-    setInterval(() => {
-      fetch("/ping").catch(() => {});
-    }, 25000);
-
-    // 启动
-    connectSocket();
   </script>
 </body>
 </html>
