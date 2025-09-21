@@ -1,70 +1,111 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="utf-8">
   <title>ACall</title>
   <style>
-    body { font-family: Arial, sans-serif; text-align: center; padding-top: 50px; }
-    h1 { color: #2c3e50; }
-    #status { font-size: 22px; margin: 20px 0; }
-    #bar-container {
-      width: 300px; height: 20px;
-      background: #ddd; margin: 20px auto; border-radius: 10px; overflow: hidden;
-    }
-    #bar {
-      height: 100%; width: 0%;
-      background: limegreen; transition: width 0.1s linear;
-    }
-    .slider {
-      width: 300px; margin-top: 20px;
-    }
+    body { font-family: Arial; padding: 20px; background: #f9f9f9; }
+    #login { margin-bottom: 20px; }
+    #users { margin: 10px 0; padding: 0; list-style: none; }
+    #users li { padding: 4px 8px; background: #eee; margin: 2px 0; border-radius: 4px; }
+    #volumeBar { width: 200px; height: 20px; background: #ddd; margin-top: 10px; border-radius: 4px; }
+    #volumeFill { height: 100%; width: 0; background: green; border-radius: 4px; }
+    button { margin: 5px; padding: 6px 12px; cursor: pointer; }
   </style>
 </head>
 <body>
-  <h1>ACall 已连接</h1>
-  <p id="status">等待通话中...</p>
-
-  <div id="bar-container">
-    <div id="bar"></div>
+  <div id="login">
+    <input id="username" placeholder="输入用户名">
+    <button onclick="login()">进入</button>
   </div>
 
-  <label for="volume">音量调节：</label>
-  <input id="volume" class="slider" type="range" min="0" max="2" step="0.01" value="1">
+  <div id="main" style="display:none;">
+    <h3>在线用户:</h3>
+    <ul id="users"></ul>
 
+    <button id="micBtn" onclick="toggleMic()">关闭麦克风</button>
+    <div id="volumeBar"><div id="volumeFill"></div></div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
-    async function initMic() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        document.getElementById("status").innerText = "麦克风已连接，开始检测声音...";
+    let socket;
+    let localStream;
+    let micOn = true;
+    let username = "";
 
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const source = audioContext.createMediaStreamSource(stream);
+    // 自动连接 + 重连
+    function connectSocket() {
+      socket = io({
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 2000
+      });
 
-        const gainNode = audioContext.createGain(); // 音量控制
-        const analyser = audioContext.createAnalyser();
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      socket.on("connect", () => {
+        console.log("✅ 已连接");
+        if (username) socket.emit("login", username);
+      });
 
-        source.connect(gainNode);
-        gainNode.connect(analyser);
-        gainNode.connect(audioContext.destination); // 输出到扬声器（回声测试）
+      socket.on("disconnect", () => {
+        console.log("❌ 断开，等待重连...");
+      });
 
-        function updateBar() {
-          analyser.getByteFrequencyData(dataArray);
-          let volume = dataArray.reduce((a, b) => a + b) / dataArray.length;
-          let percent = Math.min(100, Math.round(volume));
-          document.getElementById("bar").style.width = percent + "%";
-          requestAnimationFrame(updateBar);
-        }
-        updateBar();
-
-        document.getElementById("volume").addEventListener("input", (e) => {
-          gainNode.gain.value = e.target.value;
+      socket.on("userlist", (list) => {
+        const ul = document.getElementById("users");
+        ul.innerHTML = "";
+        list.forEach(u => {
+          const li = document.createElement("li");
+          li.innerText = u;
+          ul.appendChild(li);
         });
+      });
+    }
 
-      } catch (err) {
-        document.getElementById("status").innerText = "无法访问麦克风: " + err.message;
+    function login() {
+      username = document.getElementById("username").value.trim();
+      if (!username) {
+        alert("请输入用户名");
+        return;
+      }
+      socket.emit("login", username);
+      document.getElementById("login").style.display = "none";
+      document.getElementById("main").style.display = "block";
+      startAudio();
+    }
+
+    async function startAudio() {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(localStream);
+      const analyser = audioContext.createAnalyser();
+      source.connect(analyser);
+      const data = new Uint8Array(analyser.frequencyBinCount);
+
+      function draw() {
+        analyser.getByteFrequencyData(data);
+        let volume = data.reduce((a,b)=>a+b) / data.length;
+        document.getElementById("volumeFill").style.width = Math.min(volume,200) + "px";
+        requestAnimationFrame(draw);
+      }
+      draw();
+    }
+
+    function toggleMic() {
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.enabled = !track.enabled);
+        micOn = !micOn;
+        document.getElementById("micBtn").innerText = micOn ? "关闭麦克风" : "打开麦克风";
       }
     }
-    initMic();
+
+    // 防止 Render 休眠：定时 ping
+    setInterval(() => {
+      fetch("/ping").catch(() => {});
+    }, 25000);
+
+    // 启动
+    connectSocket();
   </script>
 </body>
 </html>
