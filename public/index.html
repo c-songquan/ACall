@@ -23,9 +23,7 @@
       box-shadow: 0 2px 8px rgba(0,0,0,0.1);
       width: 320px;
     }
-    .row {
-      margin: 10px 0;
-    }
+    .row { margin: 10px 0; }
     input, button {
       padding: 8px;
       margin: 5px 0;
@@ -40,13 +38,8 @@
       color: white;
       border: none;
     }
-    button:disabled {
-      background: #9ca3af;
-    }
-    ul {
-      list-style: none;
-      padding: 0;
-    }
+    button:disabled { background: #9ca3af; }
+    ul { list-style: none; padding: 0; }
     li {
       background: #e5e7eb;
       margin: 5px 0;
@@ -54,13 +47,8 @@
       border-radius: 6px;
       cursor: pointer;
     }
-    li:hover {
-      background: #d1d5db;
-    }
-    .small {
-      font-size: 0.9em;
-      color: #555;
-    }
+    li:hover { background: #d1d5db; }
+    .small { font-size: 0.9em; color: #555; }
   </style>
 </head>
 <body>
@@ -77,7 +65,7 @@
 
     <div class="row">
       <label class="small">Volume:</label>
-      <input type="range" id="volume" min="0" max="2" step="0.1" value="1"/>
+      <input type="range" id="volume" min="0" max="5" step="0.1" value="1"/>
     </div>
 
     <div class="row">
@@ -88,6 +76,7 @@
     <ul id="userList"></ul>
   </div>
 
+  <!-- 隐藏的 audio 用于远端和本地监听 -->
   <audio id="remoteAudio" autoplay></audio>
   <audio id="localMonitor" autoplay muted></audio>
 
@@ -105,6 +94,12 @@
     let micEnabled = true;
     let username = '';
 
+    // Web Audio API
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const remoteGain = audioCtx.createGain();
+    const remoteStreamDest = audioCtx.createMediaStreamDestination();
+    remoteAudio.srcObject = remoteStreamDest.stream;
+
     joinBtn.onclick = async () => {
       username = usernameInput.value.trim();
       if (!username) return alert("Enter name");
@@ -114,8 +109,7 @@
       toggleMicBtn.disabled = false;
 
       localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // 默认不监听自己
-      localMonitor.srcObject = null;
+      localMonitor.srcObject = null; // 默认不监听
     };
 
     toggleMicBtn.onclick = () => {
@@ -125,8 +119,10 @@
     };
 
     volumeControl.oninput = () => {
-      remoteAudio.volume = volumeControl.value;
-      localMonitor.volume = volumeControl.value;
+      remoteGain.gain.value = parseFloat(volumeControl.value);
+      if (localMonitor.srcObject) {
+        localMonitor.volume = parseFloat(volumeControl.value);
+      }
     };
 
     monitorSelf.onchange = () => {
@@ -178,7 +174,9 @@
         }
       };
       pc.ontrack = (e) => {
-        remoteAudio.srcObject = e.streams[0];
+        const source = audioCtx.createMediaStreamSource(e.streams[0]);
+        source.connect(remoteGain);
+        remoteGain.connect(remoteStreamDest);
       };
     }
 
@@ -189,6 +187,11 @@
       await pc.setLocalDescription(offer);
       ws.send(JSON.stringify({ type: 'offer', offer, target: targetUser }));
     }
+
+    // 心跳，保持 Render 醒着
+    setInterval(() => {
+      fetch("/ping").catch(() => {});
+    }, 25000);
   </script>
 </body>
 </html>
