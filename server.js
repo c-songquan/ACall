@@ -11,7 +11,7 @@ let users = {}; // { username: ws }
 // 心跳接口，防止 Render 休眠
 app.get("/ping", (req, res) => res.send("pong"));
 
-// 提供静态页面
+// 提供静态文件
 app.use(express.static("public"));
 
 wss.on("connection", (ws) => {
@@ -32,7 +32,7 @@ wss.on("connection", (ws) => {
       broadcastUsers();
     }
 
-    // 转发 WebRTC 信令 (offer/answer/candidate)
+    // 转发 WebRTC 信令
     if (["offer", "answer", "candidate"].includes(data.type)) {
       if (data.target && users[data.target]) {
         users[data.target].send(
@@ -54,7 +54,7 @@ wss.on("connection", (ws) => {
   });
 });
 
-// 广播在线用户列表
+// 广播用户列表
 function broadcastUsers() {
   const list = Object.keys(users);
   const msg = JSON.stringify({ type: "users", users: list });
