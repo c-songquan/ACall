@@ -1,34 +1,56 @@
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-
+const express = require('express');
+const http = require('http');
+const WebSocket = require('ws');
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const wss = new WebSocket.Server({ server });
 
-app.use(express.static("public"));
+let users = {}; // username -> ws
 
-// 心跳接口，防止 Render 休眠
-app.get("/ping", (req, res) => res.send("pong"));
+wss.on('connection', (ws) => {
+  ws.on('message', (msg) => {
+    let data;
+    try {
+      data = JSON.parse(msg);
+    } catch {
+      return;
+    }
 
-let users = {}; // { socket.id: username }
+    if (data.type === 'join') {
+      ws.username = data.username;
+      users[ws.username] = ws;
+      broadcastUsers();
+    }
 
-io.on("connection", (socket) => {
-  console.log("用户已连接:", socket.id);
-
-  // 登录
-  socket.on("login", (username) => {
-    users[socket.id] = username;
-    io.emit("userlist", Object.values(users));
+    // 转发 WebRTC 信令 (offer/answer/candidate)
+    if (['offer', 'answer', 'candidate'].includes(data.type)) {
+      if (data.target && users[data.target]) {
+        users[data.target].send(JSON.stringify({
+          ...data,
+          from: ws.username
+        }));
+      }
+    }
   });
 
-  // 断开
-  socket.on("disconnect", () => {
-    console.log("用户断开:", socket.id);
-    delete users[socket.id];
-    io.emit("userlist", Object.values(users));
+  ws.on('close', () => {
+    if (ws.username) {
+      delete users[ws.username];
+      broadcastUsers();
+    }
   });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`✅ 服务器运行在 ${PORT}`));
+function broadcastUsers() {
+  const list = Object.keys(users);
+  const msg = JSON.stringify({ type: 'users', users: list });
+  for (let u in users) {
+    users[u].send(msg);
+  }
+}
+
+app.use(express.static('public'));
+
+server.listen(3000, () => {
+  console.log('Server running on http://localhost:3000');
+});
