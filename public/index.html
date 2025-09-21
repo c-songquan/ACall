@@ -4,30 +4,105 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>ACall</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f3f4f6;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+    }
+    h1 {
+      margin-bottom: 10px;
+    }
+    .card {
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      width: 320px;
+    }
+    .row {
+      margin: 10px 0;
+    }
+    input, button {
+      padding: 8px;
+      margin: 5px 0;
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+    button {
+      cursor: pointer;
+      background: #3b82f6;
+      color: white;
+      border: none;
+    }
+    button:disabled {
+      background: #9ca3af;
+    }
+    ul {
+      list-style: none;
+      padding: 0;
+    }
+    li {
+      background: #e5e7eb;
+      margin: 5px 0;
+      padding: 8px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    li:hover {
+      background: #d1d5db;
+    }
+    .small {
+      font-size: 0.9em;
+      color: #555;
+    }
+  </style>
 </head>
 <body>
   <h1>ACall</h1>
-  <input id="username" placeholder="Enter name"/>
-  <button id="joinBtn">Join</button>
-  <button id="toggleMic" disabled>Mute Mic</button>
-  <div>
-    <label>Volume: <input type="range" id="volume" min="0" max="2" step="0.1" value="1"/></label>
+  <div class="card">
+    <div class="row">
+      <input id="username" placeholder="Enter name"/>
+      <button id="joinBtn">Join</button>
+    </div>
+
+    <div class="row">
+      <button id="toggleMic" disabled>Mute Mic</button>
+    </div>
+
+    <div class="row">
+      <label class="small">Volume:</label>
+      <input type="range" id="volume" min="0" max="2" step="0.1" value="1"/>
+    </div>
+
+    <div class="row">
+      <label><input type="checkbox" id="monitorSelf"> Monitor my voice</label>
+    </div>
+
+    <h3>Online Users</h3>
+    <ul id="userList"></ul>
   </div>
-  <h3>Online Users</h3>
-  <ul id="userList"></ul>
+
   <audio id="remoteAudio" autoplay></audio>
+  <audio id="localMonitor" autoplay muted></audio>
 
   <script>
     const ws = new WebSocket(`wss://${location.host}`);
     let pc, localStream;
     const remoteAudio = document.getElementById('remoteAudio');
+    const localMonitor = document.getElementById('localMonitor');
     const volumeControl = document.getElementById('volume');
     const toggleMicBtn = document.getElementById('toggleMic');
     const userList = document.getElementById('userList');
     const usernameInput = document.getElementById('username');
     const joinBtn = document.getElementById('joinBtn');
+    const monitorSelf = document.getElementById('monitorSelf');
     let micEnabled = true;
-
     let username = '';
 
     joinBtn.onclick = async () => {
@@ -39,6 +114,8 @@
       toggleMicBtn.disabled = false;
 
       localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // 默认不监听自己
+      localMonitor.srcObject = null;
     };
 
     toggleMicBtn.onclick = () => {
@@ -49,6 +126,16 @@
 
     volumeControl.oninput = () => {
       remoteAudio.volume = volumeControl.value;
+      localMonitor.volume = volumeControl.value;
+    };
+
+    monitorSelf.onchange = () => {
+      if (monitorSelf.checked) {
+        localMonitor.srcObject = localStream;
+        localMonitor.muted = false;
+      } else {
+        localMonitor.srcObject = null;
+      }
     };
 
     ws.onmessage = async (event) => {
